@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"
+    />
+    <meta name="theme-color" content="#0f0f0f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="YT Sync" />
+    <title>YouTube Timestamp Sync</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <link rel="icon" href="icon-192.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="title">
+        <span class="dot"></span>
+        <span>YT Sync</span>
+      </div>
+      <button id="refresh-btn" class="icon-btn" aria-label="Refresh">↻</button>
+      <button id="settings-btn" class="icon-btn" aria-label="Settings">⚙</button>
+    </header>
+
+    <section id="setup" class="panel hidden">
+      <h2>Pair your phone</h2>
+      <p class="muted">
+        Open the extension on your laptop, copy the sync key and your Firebase URL,
+        then paste them here.
+      </p>
+      <label class="field">
+        <span>Sync key</span>
+        <input id="sync-key-input" type="text" placeholder="ABCD-EFGH-IJKL-MNOP" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>Firebase URL</span>
+        <input id="fb-url-input" type="url" placeholder="https://your-project-default-rtdb.firebaseio.com" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>Database secret (optional)</span>
+        <input id="fb-secret-input" type="text" placeholder="Leave empty if rules are public" autocomplete="off" spellcheck="false" />
+      </label>
+      <button id="save-config-btn" class="btn primary big">Save &amp; Load</button>
+      <p id="setup-status" class="muted center"></p>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="progress">In Progress</button>
+      <button class="tab" data-tab="history">History</button>
+    </nav>
+
+    <main id="list" class="list">
+      <div class="empty">Loading…</div>
+    </main>
+
+    <footer class="app-footer">
+      <span id="status-line" class="muted"></span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
