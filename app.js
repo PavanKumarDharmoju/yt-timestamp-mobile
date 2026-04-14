@@ -93,6 +93,34 @@ function makeCard(entry) {
   });
   card.appendChild(native);
 
+  // Later tab: show a remove-from-later action next to ↗.
+  if (activeTab === "later") {
+    const rm = document.createElement("button");
+    rm.className = "card-remove";
+    rm.type = "button";
+    rm.setAttribute("aria-label", "Remove from Later");
+    rm.title = "Remove from Later";
+    rm.textContent = "\u2715"; // ✕
+    rm.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.add("removing");
+      try {
+        const cfg = Y.loadConfig();
+        if (cfg) await Y.removeLater(cfg, entry.videoId);
+      } catch (err) {
+        console.warn("remove later failed", err);
+      }
+      // Trim from cache and re-render so the list is consistent.
+      const cache = Y.loadCache();
+      cache.later = (cache.later || []).filter((e) => e.videoId !== entry.videoId);
+      Y.saveCache(cache);
+      card.remove();
+      if (!document.querySelector("#list .card")) renderFromCache(Y.loadCache());
+    });
+    card.appendChild(rm);
+  }
+
   return card;
 }
 
@@ -117,6 +145,11 @@ function renderFromCache(data) {
     renderList(
       data.progress || [],
       "No videos in progress. Watch something on your laptop or tap a video here to start tracking."
+    );
+  } else if (activeTab === "later") {
+    renderList(
+      data.later || [],
+      "Nothing saved for later. On YouTube, hover a video and tap the ⏱ button to add it here."
     );
   } else {
     renderList(data.history || [], "No watch history yet.");

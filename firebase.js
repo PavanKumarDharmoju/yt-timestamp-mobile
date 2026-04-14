@@ -23,9 +23,10 @@
   function loadCache() {
     try {
       const raw = localStorage.getItem(CACHE_KEY);
-      return raw ? JSON.parse(raw) : { progress: [], history: [] };
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed || { progress: [], history: [], later: [] };
     } catch {
-      return { progress: [], history: [] };
+      return { progress: [], history: [], later: [] };
     }
   }
   function saveCache(data) {
@@ -76,16 +77,29 @@
     return true;
   }
 
-  // Fetch both list paths in one go.
+  // Fetch all three list paths in one go.
   async function fetchAll(cfg) {
-    const [ts, hist] = await Promise.all([
+    const [ts, hist, later] = await Promise.all([
       fbGet(cfg, `timestamps/${encodeURIComponent(cfg.syncKey)}`),
       fbGet(cfg, `history/${encodeURIComponent(cfg.syncKey)}`),
+      fbGet(cfg, `later/${encodeURIComponent(cfg.syncKey)}`).catch(() => null),
     ]);
     return {
       progress: Object.values(ts || {}),
       history: Object.values(hist || {}),
+      later: Object.values(later || {}),
     };
+  }
+
+  // Watch Later: toggle membership from the PWA.
+  async function addLater(cfg, entry) {
+    if (!entry || !entry.videoId) throw new Error("missing videoId");
+    await fbPut(cfg, `later/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(entry.videoId)}`, entry);
+    return true;
+  }
+  async function removeLater(cfg, videoId) {
+    await fbDelete(cfg, `later/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(videoId)}`);
+    return true;
   }
 
   // ---------- formatting ----------
@@ -182,6 +196,8 @@
     fbPut,
     fbDelete,
     fetchAll,
+    addLater,
+    removeLater,
     // formatting + links
     fmtTime,
     fmtSince,
