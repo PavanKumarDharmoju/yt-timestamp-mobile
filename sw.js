@@ -2,12 +2,15 @@
 // (Firebase) with no caching so we always get the latest timestamps when
 // online.
 
-const CACHE = "yt-ts-sync-v1";
+const CACHE = "yt-ts-sync-v2";
 const SHELL = [
   "./",
   "./index.html",
+  "./player.html",
   "./style.css",
   "./app.js",
+  "./firebase.js",
+  "./player.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",

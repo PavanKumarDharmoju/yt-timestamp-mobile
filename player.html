@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"
+    />
+    <meta name="theme-color" content="#0f0f0f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="YT Sync" />
+    <title>YT Sync · Player</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <link rel="icon" href="icon-192.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="player-body">
+    <header class="player-header">
+      <a id="back-btn" class="icon-btn" href="index.html" aria-label="Back">←</a>
+      <div id="player-title" class="player-title">Loading…</div>
+      <a id="open-native" class="icon-btn" href="#" aria-label="Open in YouTube app" title="Open in YouTube app">↗</a>
+    </header>
+
+    <div class="player-stage">
+      <div id="player"></div>
+      <div id="player-error" class="player-error hidden">
+        <div class="player-error-inner">
+          <strong>Can't play here.</strong>
+          <p id="player-error-msg" class="muted">The video owner disabled embedded playback.</p>
+          <a id="player-error-link" class="btn primary big" href="#">Open in YouTube app</a>
+        </div>
+      </div>
+    </div>
+
+    <footer class="player-footer">
+      <span id="player-meta" class="muted">—</span>
+      <span id="player-sync" class="muted">·</span>
+    </footer>
+
+    <script src="firebase.js"></script>
+    <script src="player.js"></script>
+  </body>
+</html>

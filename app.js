@@ -1,108 +1,53 @@
-// Mobile PWA - fetches timestamps/history from Firebase REST and opens the
-// YouTube app via a plain https deep link (OS intercepts).
+// Mobile PWA list page.
+// - Reads list state from Firebase via shared helpers (window.YTSync).
+// - Card tap navigates to in-PWA player (player.html).
+// - Secondary "↗" button opens the native YouTube app via https deep link.
+// - Also handles incoming Web Share Target params on startup.
 
 const $ = (sel) => document.querySelector(sel);
-const CONFIG_KEY = "yt-ts-sync:config";
-const CACHE_KEY = "yt-ts-sync:last";
+const Y = window.YTSync;
 
 let activeTab = "progress";
 let activeRefresh = null;
 
-// ---------- config ----------
-function loadConfig() {
-  try {
-    const raw = localStorage.getItem(CONFIG_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
+// ---------- share target landing ----------
+// If the user shared a YouTube URL INTO the PWA (Android share sheet),
+// we'll land on index.html with ?url=... or ?text=... or ?title=...
+// Extract an ID and bounce to the player.
+(function handleShareTarget() {
+  const params = new URLSearchParams(location.search);
+  const candidates = [params.get("url"), params.get("text"), params.get("title")].filter(Boolean);
+  for (const c of candidates) {
+    const id = Y.extractVideoId(c);
+    if (id) {
+      location.replace(Y.playerLink(id, 0));
+      return;
+    }
   }
-}
-function saveConfig(cfg) {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
-}
-
-function loadCache() {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    return raw ? JSON.parse(raw) : { progress: [], history: [] };
-  } catch {
-    return { progress: [], history: [] };
-  }
-}
-function saveCache(data) {
-  localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-}
-
-// ---------- fetch ----------
-function fbUrl(cfg, path) {
-  const base = String(cfg.databaseUrl).replace(/\/+$/, "");
-  const sep = cfg.secret ? `?auth=${encodeURIComponent(cfg.secret)}` : "";
-  return `${base}/${path}.json${sep}`;
-}
-
-async function fbGet(cfg, path) {
-  const r = await fetch(fbUrl(cfg, path), { cache: "no-store" });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const data = await r.json();
-  return data || {};
-}
-
-async function fetchAll(cfg) {
-  const [ts, hist] = await Promise.all([
-    fbGet(cfg, `timestamps/${encodeURIComponent(cfg.syncKey)}`),
-    fbGet(cfg, `history/${encodeURIComponent(cfg.syncKey)}`),
-  ]);
-  const progress = Object.values(ts || {});
-  const history = Object.values(hist || {});
-  return { progress, history };
-}
-
-// ---------- formatting ----------
-function fmtTime(sec) {
-  sec = Math.max(0, Math.floor(sec || 0));
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  const pad = (n) => String(n).padStart(2, "0");
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
-function fmtSince(ms) {
-  if (!ms) return "";
-  const d = Math.max(0, Date.now() - ms);
-  const s = Math.floor(d / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-function deepLink(videoId, seconds) {
-  const t = Math.max(0, Math.floor(seconds || 0));
-  // Plain https URL — iOS and Android intercept and open YouTube app.
-  return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&t=${t}`;
-}
+})();
 
 // ---------- rendering ----------
 function makeCard(entry) {
-  const a = document.createElement("a");
-  a.className = "card";
-  a.href = deepLink(entry.videoId, entry.timestamp);
-  // Same tab: OS can intercept and open YouTube app
-  // (do NOT use target="_blank")
+  const card = document.createElement("div");
+  card.className = "card";
+
+  // Primary link: in-PWA player (same tab, SPA feel).
+  const primary = document.createElement("a");
+  primary.className = "card-link";
+  primary.href = Y.playerLink(entry.videoId, entry.timestamp);
 
   const thumb = document.createElement("div");
   thumb.className = "thumb";
   const img = document.createElement("img");
   img.loading = "lazy";
   img.decoding = "async";
-  img.src = entry.thumbnail || `https://i.ytimg.com/vi/${entry.videoId}/hqdefault.jpg`;
+  img.src = entry.thumbnail || Y.thumbUrl(entry.videoId);
   img.alt = "";
   thumb.appendChild(img);
 
   const tTime = document.createElement("div");
   tTime.className = "t-time";
-  tTime.textContent = fmtTime(entry.duration);
+  tTime.textContent = Y.fmtTime(entry.duration);
   thumb.appendChild(tTime);
 
   const track = document.createElement("div");
@@ -123,16 +68,32 @@ function makeCard(entry) {
   const meta = document.createElement("div");
   meta.className = "card-meta";
   const at = document.createElement("span");
-  at.textContent = `${fmtTime(entry.timestamp)} / ${fmtTime(entry.duration)}`;
+  at.textContent = `${Y.fmtTime(entry.timestamp)} / ${Y.fmtTime(entry.duration)}`;
   meta.appendChild(at);
   const since = document.createElement("span");
-  since.textContent = `· ${fmtSince(entry.savedAt)}`;
+  since.textContent = `· ${Y.fmtSince(entry.savedAt)}`;
   meta.appendChild(since);
   body.appendChild(meta);
 
-  a.appendChild(thumb);
-  a.appendChild(body);
-  return a;
+  primary.appendChild(thumb);
+  primary.appendChild(body);
+  card.appendChild(primary);
+
+  // Secondary: native YouTube app handoff. Absolute-positioned, stops
+  // propagation so it doesn't also trigger the primary link.
+  const native = document.createElement("a");
+  native.className = "open-native";
+  native.href = Y.deepLink(entry.videoId, entry.timestamp);
+  native.setAttribute("aria-label", "Open in YouTube app");
+  native.title = "Open in YouTube app";
+  native.textContent = "↗";
+  // Don't use target=_blank — OS universal links need same-tab navigation.
+  native.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+  card.appendChild(native);
+
+  return card;
 }
 
 function renderList(items, emptyText) {
@@ -151,49 +112,45 @@ function renderList(items, emptyText) {
   list.appendChild(frag);
 }
 
+function renderFromCache(data) {
+  if (activeTab === "progress") {
+    renderList(
+      data.progress || [],
+      "No videos in progress. Watch something on your laptop or tap a video here to start tracking."
+    );
+  } else {
+    renderList(data.history || [], "No watch history yet.");
+  }
+}
+
 function setStatus(text) {
   $("#status-line").textContent = text || "";
 }
 
 // ---------- refresh flow ----------
 async function refresh({ silent = false } = {}) {
-  const cfg = loadConfig();
+  const cfg = Y.loadConfig();
   if (!cfg || !cfg.syncKey || !cfg.databaseUrl) {
     showSetup(true);
+    renderFromCache(Y.loadCache());
     return;
   }
-
-  // Cancel any in-flight refresh
   if (activeRefresh) activeRefresh.cancelled = true;
   const token = { cancelled: false };
   activeRefresh = token;
 
   if (!silent) setStatus("Syncing…");
-
-  // Show cached immediately
-  const cache = loadCache();
-  renderFromCache(cache);
+  renderFromCache(Y.loadCache());
 
   try {
-    const data = await fetchAll(cfg);
+    const data = await Y.fetchAll(cfg);
     if (token.cancelled) return;
-    saveCache(data);
+    Y.saveCache(data);
     renderFromCache(data);
     setStatus(`Synced · ${new Date().toLocaleTimeString()}`);
   } catch (e) {
     if (token.cancelled) return;
     setStatus(`Offline · showing cached (${e.message || e})`);
-  }
-}
-
-function renderFromCache(data) {
-  if (activeTab === "progress") {
-    renderList(
-      data.progress || [],
-      "No videos in progress. Watch something on your laptop to see it here."
-    );
-  } else {
-    renderList(data.history || [], "No watch history yet.");
   }
 }
 
@@ -208,7 +165,7 @@ function setupTabs() {
       document.querySelectorAll(".tab").forEach((e) => e.classList.remove("active"));
       el.classList.add("active");
       activeTab = el.dataset.tab;
-      renderFromCache(loadCache());
+      renderFromCache(Y.loadCache());
     });
   });
 }
@@ -218,7 +175,7 @@ function setupControls() {
     const panel = $("#setup");
     panel.classList.toggle("hidden");
     if (!panel.classList.contains("hidden")) {
-      const cfg = loadConfig();
+      const cfg = Y.loadConfig();
       if (cfg) {
         $("#sync-key-input").value = cfg.syncKey || "";
         $("#fb-url-input").value = cfg.databaseUrl || "";
@@ -237,7 +194,7 @@ function setupControls() {
       $("#setup-status").textContent = "Sync key and Firebase URL are required.";
       return;
     }
-    saveConfig({ syncKey, databaseUrl, secret: secret || null });
+    Y.saveConfig({ syncKey, databaseUrl, secret: secret || null });
     $("#setup-status").textContent = "Saved. Loading…";
     showSetup(false);
     await refresh();
@@ -246,13 +203,11 @@ function setupControls() {
 
 // ---------- wake / focus triggers ----------
 function setupAutoRefresh() {
-  // refresh when returning to the app
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") refresh({ silent: true });
   });
   window.addEventListener("focus", () => refresh({ silent: true }));
   window.addEventListener("pageshow", () => refresh({ silent: true }));
-  // periodic while visible
   setInterval(() => {
     if (document.visibilityState === "visible") refresh({ silent: true });
   }, 60_000);
@@ -261,7 +216,6 @@ function setupAutoRefresh() {
 // ---------- service worker ----------
 function registerSw() {
   if (!("serviceWorker" in navigator)) return;
-  // Use relative path so it works under any base URL
   navigator.serviceWorker.register("sw.js").catch((e) => {
     console.warn("SW register failed:", e);
   });
@@ -273,11 +227,10 @@ document.addEventListener("DOMContentLoaded", () => {
   setupControls();
   setupAutoRefresh();
   registerSw();
-  const cfg = loadConfig();
+  const cfg = Y.loadConfig();
   if (!cfg || !cfg.syncKey || !cfg.databaseUrl) {
     showSetup(true);
-    // still render cache if any
-    renderFromCache(loadCache());
+    renderFromCache(Y.loadCache());
   } else {
     refresh();
   }
