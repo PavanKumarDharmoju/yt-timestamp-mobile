@@ -49,11 +49,26 @@
     </section>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="progress">In Progress</button>
+      <button class="tab active" data-tab="progress">Progress</button>
       <button class="tab" data-tab="later">Later</button>
+      <button class="tab" data-tab="playlists">Playlists</button>
       <button class="tab" data-tab="history">History</button>
       <span class="tab-indicator" aria-hidden="true"></span>
     </nav>
+
+    <section id="playlist-create" class="playlist-create hidden">
+      <input id="playlist-name-input" type="text" placeholder="New playlist name…" maxlength="60" autocomplete="off" />
+      <button id="playlist-create-btn" class="btn primary">Create</button>
+    </section>
+
+    <section id="playlist-detail" class="playlist-detail hidden">
+      <header class="playlist-detail-head">
+        <button id="playlist-back-btn" class="icon-btn" aria-label="Back">←</button>
+        <input id="playlist-rename-input" type="text" maxlength="60" autocomplete="off" />
+        <button id="playlist-delete-btn" class="icon-btn danger" aria-label="Delete playlist" title="Delete playlist">🗑</button>
+      </header>
+      <div id="playlist-detail-list" class="list nested"></div>
+    </section>
 
     <main id="list" class="list">
       <div class="empty">Loading…</div>

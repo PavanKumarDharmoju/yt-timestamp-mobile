@@ -7,7 +7,9 @@ const Y = window.YTSync;
 
 // ---------- params ----------
 const params = new URLSearchParams(location.search);
-const videoId = Y.extractVideoId(params.get("v")) || params.get("v");
+// `videoId` is mutable — switchToVideo() reassigns it when the user taps
+// something in the Up Next rail (we swap videos in-place without reloading).
+let videoId = Y.extractVideoId(params.get("v")) || params.get("v");
 const urlStartSec = Math.max(0, parseInt(params.get("t") || "0", 10) || 0);
 
 if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
@@ -25,6 +27,7 @@ const $errMsg = document.getElementById("player-error-msg");
 const $errLink = document.getElementById("player-error-link");
 const $openNative = document.getElementById("open-native");
 const $laterBtn = document.getElementById("later-btn");
+const $playlistBtn = document.getElementById("playlist-btn");
 
 // Prime the native-app handoff links with our best known start time.
 function updateNativeLinks(sec) {
@@ -138,6 +141,196 @@ async function toggleLater() {
 }
 
 if ($laterBtn) $laterBtn.addEventListener("click", toggleLater);
+
+// ---------- Add to playlist ----------
+if ($playlistBtn) {
+  $playlistBtn.addEventListener("click", () => {
+    if (!videoId) return;
+    const tt = currentTimes();
+    let title = savedEntryHint?.title;
+    try { title = player?.getVideoData()?.title || title; } catch {}
+    const entry = Y.buildEntry({
+      videoId,
+      title,
+      timestamp: tt ? tt.t : 0,
+      duration: tt ? tt.d : (savedEntryHint?.duration || 0),
+    });
+    Y.openPlaylistPicker(entry);
+  });
+}
+
+// ---------- fullscreen → landscape ----------
+// When YouTube's iframe enters fullscreen, lock the phone to landscape
+// so users don't have to physically rotate. Safari on iOS doesn't expose
+// screen.orientation.lock(); wrap in try/catch so it's a graceful no-op.
+function onFullscreenChange() {
+  const fs =
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    null;
+  const orient = screen.orientation;
+  if (!orient) return;
+  if (fs) {
+    try {
+      const p = orient.lock("landscape");
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch {}
+  } else {
+    try { orient.unlock(); } catch {}
+  }
+}
+document.addEventListener("fullscreenchange", onFullscreenChange);
+document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+
+// ---------- Up Next rail (Watch Later below the player) ----------
+const $upNext = document.getElementById("up-next");
+const $upNextList = document.getElementById("up-next-list");
+const $upNextSource = document.getElementById("up-next-source");
+
+async function loadUpNext() {
+  if (!$upNextList) return;
+  // Try live Firebase first, fall back to cache.
+  let items = [];
+  let source = "Watch Later";
+  const cfg = Y.loadConfig();
+  if (cfg && cfg.syncKey && cfg.databaseUrl) {
+    try {
+      const data = await Y.fbGet(cfg, `later/${encodeURIComponent(cfg.syncKey)}`);
+      items = Object.values(data || {});
+    } catch {
+      items = (Y.loadCache().later || []).slice();
+      source = "Watch Later (cached)";
+    }
+  } else {
+    items = (Y.loadCache().later || []).slice();
+  }
+
+  // If Later is empty, fall back to In Progress so the rail never looks dead.
+  if (!items.length) {
+    const cache = Y.loadCache();
+    items = (cache.progress || []).slice();
+    source = items.length ? "From In Progress" : source;
+  }
+
+  // Exclude the currently-playing video and sort newest-first.
+  items = items
+    .filter((e) => e && e.videoId && e.videoId !== videoId)
+    .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+
+  if ($upNextSource) $upNextSource.textContent = `From ${source}`;
+  renderUpNext(items);
+}
+
+function renderUpNext(items) {
+  $upNextList.innerHTML = "";
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "up-next-empty";
+    empty.textContent = "Save videos to Watch Later to see them here.";
+    $upNextList.appendChild(empty);
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  items.slice(0, 20).forEach((e) => frag.appendChild(makeUpNextCard(e)));
+  $upNextList.appendChild(frag);
+}
+
+function makeUpNextCard(entry) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "up-next-card";
+  card.setAttribute("aria-label", `Play ${entry.title || entry.videoId}`);
+
+  const thumb = document.createElement("div");
+  thumb.className = "up-next-thumb";
+  const img = document.createElement("img");
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.src = entry.thumbnail || Y.thumbUrl(entry.videoId);
+  img.alt = "";
+  thumb.appendChild(img);
+  if (entry.duration) {
+    const t = document.createElement("span");
+    t.className = "up-next-duration";
+    t.textContent = Y.fmtTime(entry.duration);
+    thumb.appendChild(t);
+  }
+  if (entry.percent && entry.percent > 0) {
+    const track = document.createElement("div");
+    track.className = "up-next-progress";
+    const fill = document.createElement("div");
+    fill.className = "up-next-progress-fill";
+    fill.style.width = `${Math.min(100, Math.round(entry.percent * 100))}%`;
+    track.appendChild(fill);
+    thumb.appendChild(track);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "up-next-meta";
+  const title = document.createElement("div");
+  title.className = "up-next-title-text";
+  title.textContent = entry.title || entry.videoId;
+  meta.appendChild(title);
+  const sub = document.createElement("div");
+  sub.className = "up-next-sub";
+  sub.textContent = entry.timestamp ? `From ${Y.fmtTime(entry.timestamp)}` : Y.fmtSince(entry.savedAt);
+  meta.appendChild(sub);
+
+  card.appendChild(thumb);
+  card.appendChild(meta);
+
+  card.addEventListener("click", (e) => {
+    e.preventDefault();
+    switchToVideo(entry);
+  });
+
+  return card;
+}
+
+// Switch the current player to a new video without reloading the page.
+async function switchToVideo(entry) {
+  if (!entry || !entry.videoId) return;
+  // Save the current video's state one last time before we lose it.
+  try { await saveNow("switch"); } catch {}
+  // Update URL so reload / back-nav preserves the new video.
+  const newUrl = `player.html?v=${encodeURIComponent(entry.videoId)}&t=${Math.floor(entry.timestamp || 0)}`;
+  history.replaceState({}, "", newUrl);
+  // Reset local state.
+  stopSaveTimer();
+  completed = false;
+  lastSavedAt = 0;
+  savedEntryHint = entry;
+  startSec = Math.max(0, Math.floor(entry.timestamp || 0));
+  videoId = entry.videoId;
+  $title.textContent = entry.title || entry.videoId;
+  updateNativeLinks(startSec);
+  setLaterState(false); // will re-populate via checkLaterForCurrent
+  checkLaterForCurrent();
+  if (player && typeof player.loadVideoById === "function") {
+    player.loadVideoById({ videoId: entry.videoId, startSeconds: startSec });
+  } else {
+    // Player not yet constructed — just let boot handle it.
+  }
+  // Refresh the rail so the new video is no longer in it.
+  loadUpNext();
+  // Scroll to top so the user sees the player.
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function checkLaterForCurrent() {
+  const cfg = Y.loadConfig();
+  if (!cfg || !cfg.syncKey || !cfg.databaseUrl) return;
+  try {
+    const entry = await Y.fbGet(cfg, `later/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(videoId)}`);
+    setLaterState(!!entry);
+  } catch {
+    const cached = (Y.loadCache().later || []).find((e) => e.videoId === videoId);
+    setLaterState(!!cached);
+  }
+}
+
+// Kick off the rail load after the boot IIFE runs.
+loadUpNext();
 
 // Auto-remove from Later once we've watched it (pairs with 95% complete +
 // onEnded). Same reasoning YouTube applies to its own Watch Later list.

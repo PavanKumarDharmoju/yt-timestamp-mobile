@@ -9,6 +9,8 @@ const Y = window.YTSync;
 
 let activeTab = "progress";
 let activeRefresh = null;
+let playlistsCache = [];   // summaries for the picker
+let openPlaylistId = null; // non-null inside drill-in view
 
 // ---------- share target landing ----------
 // If the user shared a YouTube URL INTO the PWA (Android share sheet),
@@ -93,7 +95,24 @@ function makeCard(entry) {
   });
   card.appendChild(native);
 
-  // Later tab: show a remove-from-later action next to ↗.
+  // "+" button in the card corner opens a playlist picker.
+  const addPl = document.createElement("button");
+  addPl.className = "card-playlist";
+  addPl.type = "button";
+  addPl.setAttribute("aria-label", "Add to playlist");
+  addPl.title = "Add to playlist";
+  addPl.textContent = "\u002B"; // +
+  addPl.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    Y.openPlaylistPicker(entry, {
+      playlists: playlistsCache,
+      onChange: refreshPlaylistsCache,
+    });
+  });
+  card.appendChild(addPl);
+
+  // Later tab: show a remove-from-later action.
   if (activeTab === "later") {
     const rm = document.createElement("button");
     rm.className = "card-remove";
@@ -121,8 +140,33 @@ function makeCard(entry) {
     card.appendChild(rm);
   }
 
+  // Playlist drill-in: show remove-from-playlist.
+  if (activeTab === "playlists" && openPlaylistId) {
+    const rm = document.createElement("button");
+    rm.className = "card-remove";
+    rm.type = "button";
+    rm.setAttribute("aria-label", "Remove from playlist");
+    rm.title = "Remove from playlist";
+    rm.textContent = "\u2715";
+    rm.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.add("removing");
+      try {
+        const cfg = Y.loadConfig();
+        if (cfg) await Y.removeFromPlaylist(cfg, openPlaylistId, entry.videoId);
+      } catch (err) {
+        console.warn("remove from playlist failed", err);
+      }
+      card.remove();
+      await refreshPlaylistsCache();
+    });
+    card.appendChild(rm);
+  }
+
   return card;
 }
+
 
 function renderList(items, emptyText) {
   const list = $("#list");
@@ -141,6 +185,7 @@ function renderList(items, emptyText) {
 }
 
 function renderFromCache(data) {
+  updatePlaylistChrome();
   if (activeTab === "progress") {
     renderList(
       data.progress || [],
@@ -151,9 +196,110 @@ function renderFromCache(data) {
       data.later || [],
       "Nothing saved for later. On YouTube, hover a video and tap the ⏱ button to add it here."
     );
+  } else if (activeTab === "playlists") {
+    if (openPlaylistId) {
+      renderPlaylistDetail(openPlaylistId);
+    } else {
+      renderPlaylistsList();
+    }
   } else {
     renderList(data.history || [], "No watch history yet.");
   }
+}
+
+// ---------- playlists view ----------
+function updatePlaylistChrome() {
+  const inPlaylists = activeTab === "playlists";
+  $("#playlist-create").classList.toggle("hidden", !inPlaylists || !!openPlaylistId);
+  $("#playlist-detail").classList.toggle("hidden", !inPlaylists || !openPlaylistId);
+  $("#list").classList.toggle("hidden", inPlaylists && !!openPlaylistId);
+}
+
+function makePlaylistRow(pl) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "playlist-row";
+  const left = document.createElement("div");
+  left.className = "playlist-row-left";
+  const name = document.createElement("div");
+  name.className = "playlist-row-name";
+  name.textContent = pl.name;
+  const meta = document.createElement("div");
+  meta.className = "playlist-row-meta muted small";
+  const count = pl.itemCount || 0;
+  meta.textContent = `${count} video${count === 1 ? "" : "s"} · ${Y.fmtSince(pl.updatedAt)}`;
+  left.appendChild(name);
+  left.appendChild(meta);
+  const chev = document.createElement("span");
+  chev.className = "chev";
+  chev.textContent = "\u203A";
+  row.appendChild(left);
+  row.appendChild(chev);
+  row.addEventListener("click", () => {
+    openPlaylistId = pl.id;
+    renderFromCache(Y.loadCache());
+  });
+  return row;
+}
+
+async function refreshPlaylistsCache() {
+  const cfg = Y.loadConfig();
+  if (!cfg || !cfg.syncKey || !cfg.databaseUrl) {
+    playlistsCache = [];
+    return;
+  }
+  try {
+    playlistsCache = await Y.fetchPlaylists(cfg);
+  } catch {
+    // stay with last known
+  }
+}
+
+async function renderPlaylistsList() {
+  const list = $("#list");
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  await refreshPlaylistsCache();
+  if (!playlistsCache.length) {
+    list.innerHTML =
+      '<div class="empty">No playlists yet. Create one above to bundle videos.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  playlistsCache.forEach((pl) => frag.appendChild(makePlaylistRow(pl)));
+  list.appendChild(frag);
+}
+
+async function renderPlaylistDetail(playlistId) {
+  const container = $("#playlist-detail-list");
+  container.innerHTML = '<div class="empty">Loading…</div>';
+  const cfg = Y.loadConfig();
+  if (!cfg) {
+    container.innerHTML = '<div class="empty">Configure Firebase first.</div>';
+    return;
+  }
+  let playlist;
+  try {
+    playlist = await Y.fetchPlaylist(cfg, playlistId);
+  } catch {
+    container.innerHTML = '<div class="empty">Could not load playlist.</div>';
+    return;
+  }
+  if (!playlist) {
+    container.innerHTML = '<div class="empty">Playlist not found.</div>';
+    return;
+  }
+  $("#playlist-rename-input").value = playlist.name || "";
+  const items = playlist.items || [];
+  if (!items.length) {
+    container.innerHTML =
+      '<div class="empty">Empty playlist. Tap + on any video to add it here.</div>';
+    return;
+  }
+  container.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  items.forEach((e) => frag.appendChild(makeCard(e)));
+  container.appendChild(frag);
 }
 
 function setStatus(text) {
@@ -198,8 +344,74 @@ function setupTabs() {
       document.querySelectorAll(".tab").forEach((e) => e.classList.remove("active"));
       el.classList.add("active");
       activeTab = el.dataset.tab;
+      openPlaylistId = null;
       renderFromCache(Y.loadCache());
     });
+  });
+}
+
+function setupPlaylistsUI() {
+  const nameInput = $("#playlist-name-input");
+  const createBtn = $("#playlist-create-btn");
+  const doCreate = async () => {
+    const name = nameInput.value.trim();
+    if (!name) return;
+    const cfg = Y.loadConfig();
+    if (!cfg) return;
+    createBtn.disabled = true;
+    try {
+      await Y.createPlaylist(cfg, name);
+      nameInput.value = "";
+      await refreshPlaylistsCache();
+      await renderPlaylistsList();
+    } finally {
+      createBtn.disabled = false;
+    }
+  };
+  createBtn.addEventListener("click", doCreate);
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doCreate();
+  });
+
+  $("#playlist-back-btn").addEventListener("click", () => {
+    openPlaylistId = null;
+    renderFromCache(Y.loadCache());
+  });
+
+  const renameInput = $("#playlist-rename-input");
+  const commitRename = async () => {
+    if (!openPlaylistId) return;
+    const name = renameInput.value.trim();
+    if (!name) return;
+    const cfg = Y.loadConfig();
+    if (!cfg) return;
+    try {
+      await Y.renamePlaylist(cfg, openPlaylistId, name);
+      await refreshPlaylistsCache();
+    } catch {
+      // no-op
+    }
+  };
+  renameInput.addEventListener("blur", commitRename);
+  renameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      renameInput.blur();
+    }
+  });
+
+  $("#playlist-delete-btn").addEventListener("click", async () => {
+    if (!openPlaylistId) return;
+    if (!confirm("Delete this playlist? This cannot be undone.")) return;
+    const cfg = Y.loadConfig();
+    if (!cfg) return;
+    try {
+      await Y.deletePlaylist(cfg, openPlaylistId);
+    } finally {
+      openPlaylistId = null;
+      await refreshPlaylistsCache();
+      renderFromCache(Y.loadCache());
+    }
   });
 }
 
@@ -258,6 +470,7 @@ function registerSw() {
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
   setupControls();
+  setupPlaylistsUI();
   setupAutoRefresh();
   registerSw();
   const cfg = Y.loadConfig();
@@ -266,5 +479,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderFromCache(Y.loadCache());
   } else {
     refresh();
+    // Warm the picker so "+" on a card has data immediately.
+    refreshPlaylistsCache();
   }
 });

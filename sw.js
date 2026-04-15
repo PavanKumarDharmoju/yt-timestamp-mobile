@@ -2,7 +2,7 @@
 // (Firebase) with no caching so we always get the latest timestamps when
 // online.
 
-const CACHE = "yt-ts-sync-v3";
+const CACHE = "yt-ts-sync-v4";
 const SHELL = [
   "./",
   "./index.html",

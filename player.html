@@ -21,6 +21,7 @@
       <a id="back-btn" class="icon-btn" href="index.html" aria-label="Back">←</a>
       <div id="player-title" class="player-title">Loading…</div>
       <button id="later-btn" class="icon-btn" type="button" aria-label="Save to Watch Later" title="Save to Watch Later">⏱</button>
+      <button id="playlist-btn" class="icon-btn" type="button" aria-label="Add to playlist" title="Add to playlist">+</button>
       <a id="open-native" class="icon-btn" href="#" aria-label="Open in YouTube app" title="Open in YouTube app">↗</a>
     </header>
 
@@ -35,10 +36,18 @@
       </div>
     </div>
 
-    <footer class="player-footer">
+    <div class="player-meta-row">
       <span id="player-meta" class="muted">—</span>
       <span id="player-sync" class="muted">·</span>
-    </footer>
+    </div>
+
+    <section class="up-next" id="up-next">
+      <div class="up-next-head">
+        <h3 class="up-next-title">Up next</h3>
+        <span id="up-next-source" class="muted small">From Watch Later</span>
+      </div>
+      <div id="up-next-list" class="up-next-list"></div>
+    </section>
 
     <script src="firebase.js"></script>
     <script src="player.js"></script>

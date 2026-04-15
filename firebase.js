@@ -102,6 +102,229 @@
     return true;
   }
 
+  // ---------- playlists ----------
+  function generatePlaylistId() {
+    return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  async function fetchPlaylists(cfg) {
+    const data = await fbGet(cfg, `playlists/${encodeURIComponent(cfg.syncKey)}`);
+    const items = Object.values(data || {}).map((p) => ({
+      id: p.id,
+      name: p.name,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+      itemCount: p.items ? Object.keys(p.items).length : 0,
+    }));
+    items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return items;
+  }
+
+  async function fetchPlaylist(cfg, playlistId) {
+    const pl = await fbGet(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}`
+    );
+    if (!pl) return null;
+    return {
+      id: pl.id,
+      name: pl.name,
+      createdAt: pl.createdAt,
+      updatedAt: pl.updatedAt,
+      items: Object.values(pl.items || {}).sort(
+        (a, b) => (b.addedAt || 0) - (a.addedAt || 0)
+      ),
+    };
+  }
+
+  async function createPlaylist(cfg, name) {
+    const clean = String(name || "").trim();
+    if (!clean) throw new Error("missing name");
+    const now = Date.now();
+    const playlist = {
+      id: generatePlaylistId(),
+      name: clean,
+      createdAt: now,
+      updatedAt: now,
+      items: {},
+    };
+    await fbPut(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlist.id)}`,
+      playlist
+    );
+    return playlist;
+  }
+
+  async function renamePlaylist(cfg, playlistId, name) {
+    const clean = String(name || "").trim();
+    if (!playlistId || !clean) throw new Error("missing args");
+    const now = Date.now();
+    await fbPut(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}/name`,
+      clean
+    );
+    await fbPut(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}/updatedAt`,
+      now
+    );
+    return true;
+  }
+
+  async function deletePlaylist(cfg, playlistId) {
+    if (!playlistId) throw new Error("missing playlistId");
+    await fbDelete(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}`
+    );
+    return true;
+  }
+
+  async function addToPlaylist(cfg, playlistId, entry) {
+    if (!playlistId || !entry || !entry.videoId) throw new Error("missing args");
+    const now = Date.now();
+    const item = { ...entry, addedAt: now };
+    await fbPut(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}/items/${encodeURIComponent(entry.videoId)}`,
+      item
+    );
+    await fbPut(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}/updatedAt`,
+      now
+    );
+    return item;
+  }
+
+  async function removeFromPlaylist(cfg, playlistId, videoId) {
+    if (!playlistId || !videoId) throw new Error("missing args");
+    const now = Date.now();
+    await fbDelete(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}/items/${encodeURIComponent(videoId)}`
+    );
+    await fbPut(
+      cfg,
+      `playlists/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(playlistId)}/updatedAt`,
+      now
+    );
+    return true;
+  }
+
+  // ---------- add-to-playlist bottom sheet ----------
+  // Shared between the list page and the player page so we only maintain one
+  // picker. `getPlaylists` lets the caller pass a warmed cache; if omitted
+  // we fetch fresh. `onChange` fires after any mutation so the caller can
+  // refresh its own summary cache.
+  async function openPlaylistPicker(entry, opts = {}) {
+    const cfg = loadConfig();
+    if (!cfg || !cfg.syncKey || !cfg.databaseUrl) return;
+    if (!entry || !entry.videoId) return;
+
+    // One sheet at a time.
+    document.querySelectorAll(".sheet-backdrop").forEach((n) => n.remove());
+
+    let playlists = Array.isArray(opts.playlists) ? opts.playlists.slice() : null;
+    if (!playlists) {
+      try { playlists = await fetchPlaylists(cfg); } catch { playlists = []; }
+    }
+
+    const back = document.createElement("div");
+    back.className = "sheet-backdrop";
+    const sheet = document.createElement("div");
+    sheet.className = "sheet";
+
+    const head = document.createElement("div");
+    head.className = "sheet-head";
+    const htitle = document.createElement("div");
+    htitle.className = "sheet-title";
+    htitle.textContent = "Add to playlist";
+    const close = document.createElement("button");
+    close.className = "icon-btn";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "\u2715";
+    close.addEventListener("click", () => back.remove());
+    head.appendChild(htitle);
+    head.appendChild(close);
+    sheet.appendChild(head);
+
+    const createRow = document.createElement("div");
+    createRow.className = "sheet-create";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "New playlist name\u2026";
+    input.maxLength = 60;
+    const createBtn = document.createElement("button");
+    createBtn.className = "btn primary";
+    createBtn.textContent = "Create & Add";
+    const handleCreate = async () => {
+      const name = input.value.trim();
+      if (!name) return;
+      createBtn.disabled = true;
+      try {
+        const pl = await createPlaylist(cfg, name);
+        await addToPlaylist(cfg, pl.id, entry);
+        if (typeof opts.onChange === "function") await opts.onChange();
+        back.remove();
+      } catch {
+        createBtn.disabled = false;
+        createBtn.textContent = "Failed";
+      }
+    };
+    createBtn.addEventListener("click", handleCreate);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") handleCreate();
+    });
+    createRow.appendChild(input);
+    createRow.appendChild(createBtn);
+    sheet.appendChild(createRow);
+
+    const body = document.createElement("div");
+    body.className = "sheet-body";
+    if (!playlists.length) {
+      const empty = document.createElement("div");
+      empty.className = "sheet-empty";
+      empty.textContent = "No playlists yet \u2014 create one above.";
+      body.appendChild(empty);
+    } else {
+      playlists.forEach((pl) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "sheet-row";
+        const name = document.createElement("span");
+        name.textContent = pl.name;
+        const meta = document.createElement("span");
+        meta.className = "muted small";
+        meta.textContent = `${pl.itemCount || 0}`;
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.addEventListener("click", async () => {
+          row.disabled = true;
+          try {
+            await addToPlaylist(cfg, pl.id, entry);
+            row.innerHTML = "";
+            row.textContent = "Added \u2713";
+            if (typeof opts.onChange === "function") await opts.onChange();
+            setTimeout(() => back.remove(), 500);
+          } catch {
+            row.disabled = false;
+            row.textContent = "Failed";
+          }
+        });
+        body.appendChild(row);
+      });
+    }
+    sheet.appendChild(body);
+    back.appendChild(sheet);
+    back.addEventListener("click", (ev) => {
+      if (ev.target === back) back.remove();
+    });
+    document.body.appendChild(back);
+  }
+
   // ---------- formatting ----------
   function fmtTime(sec) {
     sec = Math.max(0, Math.floor(sec || 0));
@@ -198,6 +421,15 @@
     fetchAll,
     addLater,
     removeLater,
+    // playlists
+    fetchPlaylists,
+    fetchPlaylist,
+    createPlaylist,
+    renamePlaylist,
+    deletePlaylist,
+    addToPlaylist,
+    removeFromPlaylist,
+    openPlaylistPicker,
     // formatting + links
     fmtTime,
     fmtSince,
