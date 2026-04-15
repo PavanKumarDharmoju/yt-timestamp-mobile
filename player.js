@@ -24,6 +24,7 @@ const $err = document.getElementById("player-error");
 const $errMsg = document.getElementById("player-error-msg");
 const $errLink = document.getElementById("player-error-link");
 const $openNative = document.getElementById("open-native");
+const $laterBtn = document.getElementById("later-btn");
 
 // Prime the native-app handoff links with our best known start time.
 function updateNativeLinks(sec) {
@@ -42,6 +43,8 @@ let completed = false;
 let startSec = urlStartSec;
 
 // ---------- boot sequence ----------
+let inLater = false;
+
 (async function boot() {
   if (!videoId) return;
 
@@ -49,11 +52,15 @@ let startSec = urlStartSec;
   const cfg = Y.loadConfig();
   if (cfg && cfg.syncKey && cfg.databaseUrl) {
     try {
-      const entry = await Y.fbGet(cfg, `timestamps/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(videoId)}`);
+      const [entry, laterEntry] = await Promise.all([
+        Y.fbGet(cfg, `timestamps/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(videoId)}`),
+        Y.fbGet(cfg, `later/${encodeURIComponent(cfg.syncKey)}/${encodeURIComponent(videoId)}`).catch(() => null),
+      ]);
       if (entry && typeof entry.timestamp === "number") {
         savedEntryHint = entry;
         if (entry.timestamp > startSec) startSec = entry.timestamp;
       }
+      if (laterEntry) setLaterState(true);
     } catch (e) {
       // Offline — try cache
       const cache = Y.loadCache();
@@ -64,6 +71,8 @@ let startSec = urlStartSec;
         savedEntryHint = hit;
         if (hit.timestamp > startSec) startSec = hit.timestamp;
       }
+      const lh = (cache.later || []).find((e) => e.videoId === videoId);
+      if (lh) setLaterState(true);
     }
   }
 
@@ -73,6 +82,79 @@ let startSec = urlStartSec;
   // 2. Load IFrame API and wait for it.
   loadIframeApi();
 })();
+
+// ---------- Watch Later toggle ----------
+function setLaterState(on) {
+  inLater = !!on;
+  if (!$laterBtn) return;
+  $laterBtn.classList.toggle("saved", inLater);
+  $laterBtn.setAttribute("aria-label", inLater ? "Remove from Watch Later" : "Save to Watch Later");
+  $laterBtn.title = inLater ? "Remove from Watch Later" : "Save to Watch Later";
+  $laterBtn.textContent = inLater ? "\u2713" : "\u23F1"; // ✓ or ⏱
+}
+
+async function toggleLater() {
+  if (!videoId) return;
+  const cfg = Y.loadConfig();
+  if (!cfg || !cfg.syncKey || !cfg.databaseUrl) {
+    $sync.textContent = "· configure Firebase to save Later";
+    return;
+  }
+  const wasOn = inLater;
+  // Optimistic UI
+  setLaterState(!wasOn);
+  $laterBtn.disabled = true;
+  try {
+    if (wasOn) {
+      await Y.removeLater(cfg, videoId);
+      const cache = Y.loadCache();
+      cache.later = (cache.later || []).filter((e) => e.videoId !== videoId);
+      Y.saveCache(cache);
+      $sync.textContent = "· removed from Later";
+    } else {
+      const tt = currentTimes();
+      let title = savedEntryHint?.title;
+      try { title = player?.getVideoData()?.title || title; } catch {}
+      const entry = Y.buildEntry({
+        videoId,
+        title,
+        timestamp: 0,
+        duration: tt ? tt.d : (savedEntryHint?.duration || 0),
+      });
+      await Y.addLater(cfg, entry);
+      const cache = Y.loadCache();
+      cache.later = cache.later || [];
+      const i = cache.later.findIndex((e) => e.videoId === videoId);
+      if (i >= 0) cache.later[i] = entry; else cache.later.unshift(entry);
+      Y.saveCache(cache);
+      $sync.textContent = "· saved to Later";
+    }
+  } catch (e) {
+    setLaterState(wasOn); // revert
+    $sync.textContent = `· later failed (${e.message || e})`;
+  } finally {
+    $laterBtn.disabled = false;
+  }
+}
+
+if ($laterBtn) $laterBtn.addEventListener("click", toggleLater);
+
+// Auto-remove from Later once we've watched it (pairs with 95% complete +
+// onEnded). Same reasoning YouTube applies to its own Watch Later list.
+async function autoRemoveFromLaterIfPresent() {
+  if (!inLater) return;
+  const cfg = Y.loadConfig();
+  if (!cfg || !cfg.syncKey || !cfg.databaseUrl) return;
+  try {
+    await Y.removeLater(cfg, videoId);
+    const cache = Y.loadCache();
+    cache.later = (cache.later || []).filter((e) => e.videoId !== videoId);
+    Y.saveCache(cache);
+    setLaterState(false);
+  } catch {
+    // best effort
+  }
+}
 
 function loadIframeApi() {
   if (window.YT && window.YT.Player) {
@@ -211,6 +293,7 @@ async function saveNow(reason) {
     completed = true;
     await writeHistoryOnly(entry);
     await clearInProgress();
+    await autoRemoveFromLaterIfPresent();
     $sync.textContent = `· watched to end`;
     return;
   }
@@ -275,6 +358,7 @@ async function handleEnded() {
   completed = true;
   await writeHistoryOnly(entry);
   await clearInProgress();
+  await autoRemoveFromLaterIfPresent();
   $sync.textContent = "· watched to end";
 }
 

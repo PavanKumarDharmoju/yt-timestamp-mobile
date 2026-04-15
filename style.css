@@ -97,6 +97,13 @@ body {
 }
 .icon-btn:hover { background: rgba(255, 255, 255, 0.08); }
 .icon-btn:active { transform: scale(0.94); background: rgba(255, 255, 255, 0.12); }
+.icon-btn[disabled] { opacity: 0.55; pointer-events: none; }
+.icon-btn.saved {
+  background: linear-gradient(180deg, rgba(63, 140, 255, 0.35), rgba(63, 140, 255, 0.18));
+  border-color: rgba(63, 140, 255, 0.55);
+  color: #e8f0ff;
+  box-shadow: 0 0 0 1px rgba(63, 140, 255, 0.25), 0 6px 16px rgba(63, 140, 255, 0.25);
+}
 
 /* ---------- setup panel ---------- */
 .panel {
